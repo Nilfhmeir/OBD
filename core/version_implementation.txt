@@ -1,0 +1,78 @@
+/*
+ * Version Information Implementation
+ */
+
+#include "version.h"
+#include "app_config.h"
+#include "esp_log.h"
+#include "esp_idf_version.h"
+#include <stdio.h>
+#include <string.h>
+
+static const char *TAG = "VERSION";
+
+const char* get_project_version(void)
+{
+    return PROJECT_VERSION;
+}
+
+const char* get_build_info(void)
+{
+    static char build_info[256];
+    
+    snprintf(build_info, sizeof(build_info),
+        "Built on %s %s | Target: %s | Type: %s | ESP-IDF: %s",
+        PROJECT_BUILD_DATE,
+        PROJECT_BUILD_TIME,
+        BUILD_TARGET,
+        BUILD_TYPE,
+        IDF_VER
+    );
+    
+    return build_info;
+}
+
+void print_version_info(void)
+{
+    ESP_LOGI(TAG, "=== %s ===", PROJECT_NAME);
+    ESP_LOGI(TAG, "Version: %s", PROJECT_VERSION);
+    ESP_LOGI(TAG, "Build: %s %s", PROJECT_BUILD_DATE, PROJECT_BUILD_TIME);
+    ESP_LOGI(TAG, "Target: %s", BUILD_TARGET);
+    ESP_LOGI(TAG, "Build Type: %s", BUILD_TYPE);
+    ESP_LOGI(TAG, "ESP-IDF: %s", IDF_VER);
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "Hardware:");
+    ESP_LOGI(TAG, "  Board: %s", BOARD_VERSION);
+    ESP_LOGI(TAG, "  MCU: %s", MCU_VERSION);
+    ESP_LOGI(TAG, "  Display: %s", DISPLAY_VERSION);
+    ESP_LOGI(TAG, "  Touch: %s", TOUCH_VERSION);
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "Features:");
+    ESP_LOGI(TAG, "  OBD2: %s", OBD2_FEATURES);
+    ESP_LOGI(TAG, "  Diagnostics: %s", DIAGNOSTIC_FEATURES);
+    ESP_LOGI(TAG, "  UI: %s", UI_FEATURES);
+    ESP_LOGI(TAG, "  ELMduino: %s", ELMDUINO_VERSION);
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "API Versions:");
+    ESP_LOGI(TAG, "  OBD2 API: %s", OBD2_API_VERSION);
+    ESP_LOGI(TAG, "  DTC API: %s", DTC_API_VERSION);
+    ESP_LOGI(TAG, "  VIN API: %s", VIN_API_VERSION);
+    ESP_LOGI(TAG, "  Touch API: %s", TOUCH_API_VERSION);
+}
+
+const char* get_feature_list(void)
+{
+    static char features[512];
+    
+    snprintf(features, sizeof(features),
+        "Features: %s | APIs: OBD2 %s, DTC %s, VIN %s | Hardware: %s + %s",
+        FEATURES_VERSION,
+        OBD2_API_VERSION,
+        DTC_API_VERSION, 
+        VIN_API_VERSION,
+        BOARD_VERSION,
+        DISPLAY_VERSION
+    );
+    
+    return features;
+}

@@ -1,0 +1,39 @@
+/*
+ * LVGL Touch Integration Header for ESP32-8048S070
+ * Connects GT911 touch controller to LVGL input system
+ */
+
+#pragma once
+
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * Initialize touch input for LVGL
+ * @return ESP_OK on success
+ */
+esp_err_t lvgl_touch_init(void);
+
+/**
+ * Deinitialize touch input
+ * @return ESP_OK on success
+ */
+esp_err_t lvgl_touch_deinit(void);
+
+/**
+ * Perform touch calibration
+ * @return ESP_OK on success
+ */
+esp_err_t lvgl_touch_calibrate(void);
+
+/**
+ * Run touch test for verification
+ */
+void lvgl_touch_test(void);
+
+#ifdef __cplusplus
+}
+#endif

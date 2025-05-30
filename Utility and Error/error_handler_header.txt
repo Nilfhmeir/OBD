@@ -1,0 +1,174 @@
+/*
+ * Error Handler for ESP32-8048S070 Enhanced OBD2 Dashboard
+ */
+
+#pragma once
+
+#include "esp_err.h"
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// ===== ERROR TYPES =====
+typedef enum {
+    ERROR_TYPE_SYSTEM = 0,
+    ERROR_TYPE_USB_HOST,
+    ERROR_TYPE_DISPLAY,
+    ERROR_TYPE_TOUCH,
+    ERROR_TYPE_OBD2,
+    ERROR_TYPE_DTC,
+    ERROR_TYPE_VIN,
+    ERROR_TYPE_MEMORY,
+    ERROR_TYPE_COMMUNICATION,
+    ERROR_TYPE_HARDWARE,
+    ERROR_TYPE_MAX
+} error_type_t;
+
+// ===== ERROR SEVERITY =====
+typedef enum {
+    ERROR_SEVERITY_INFO = 0,
+    ERROR_SEVERITY_WARNING,
+    ERROR_SEVERITY_ERROR,
+    ERROR_SEVERITY_CRITICAL,
+    ERROR_SEVERITY_FATAL
+} error_severity_t;
+
+// ===== ERROR STRUCTURE =====
+typedef struct {
+    error_type_t type;
+    error_severity_t severity;
+    esp_err_t esp_error;
+    uint32_t timestamp;
+    uint32_t line;
+    const char* file;
+    const char* function;
+    char description[128];
+} error_info_t;
+
+// ===== ERROR HANDLER CONFIGURATION =====
+#define MAX_ERROR_HISTORY           20
+#define ERROR_DESCRIPTION_MAX_LEN   128
+#define ERROR_AUTO_RECOVERY_ENABLED 1
+
+// ===== MACROS FOR ERROR REPORTING =====
+#define REPORT_ERROR(type, severity, esp_err, desc) \
+    error_handler_report(type, severity, esp_err, __FILE__, __LINE__, __func__, desc)
+
+#define REPORT_SYSTEM_ERROR(esp_err, desc) \
+    REPORT_ERROR(ERROR_TYPE_SYSTEM, ERROR_SEVERITY_ERROR, esp_err, desc)
+
+#define REPORT_USB_ERROR(esp_err, desc) \
+    REPORT_ERROR(ERROR_TYPE_USB_HOST, ERROR_SEVERITY_ERROR, esp_err, desc)
+
+#define REPORT_DISPLAY_ERROR(esp_err, desc) \
+    REPORT_ERROR(ERROR_TYPE_DISPLAY, ERROR_SEVERITY_ERROR, esp_err, desc)
+
+#define REPORT_OBD2_ERROR(esp_err, desc) \
+    REPORT_ERROR(ERROR_TYPE_OBD2, ERROR_SEVERITY_WARNING, esp_err, desc)
+
+#define REPORT_CRITICAL_ERROR(type, esp_err, desc) \
+    REPORT_ERROR(type, ERROR_SEVERITY_CRITICAL, esp_err, desc)
+
+#define REPORT_FATAL_ERROR(type, esp_err, desc) \
+    REPORT_ERROR(type, ERROR_SEVERITY_FATAL, esp_err, desc)
+
+// ===== FUNCTION DECLARATIONS =====
+/**
+ * @brief Initialize error handler
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t error_handler_init(void);
+
+/**
+ * @brief Report an error
+ * @param type Error type
+ * @param severity Error severity
+ * @param esp_error ESP error code
+ * @param file Source file name
+ * @param line Source line number
+ * @param function Function name
+ * @param description Error description
+ */
+void error_handler_report(error_type_t type, error_severity_t severity, 
+                         esp_err_t esp_error, const char* file, uint32_t line,
+                         const char* function, const char* description);
+
+/**
+ * @brief Get error count by type
+ * @param type Error type
+ * @return uint32_t Error count
+ */
+uint32_t error_handler_get_count(error_type_t type);
+
+/**
+ * @brief Get total error count
+ * @return uint32_t Total error count
+ */
+uint32_t error_handler_get_total_count(void);
+
+/**
+ * @brief Get last error
+ * @param error_info Pointer to error info structure
+ * @return bool true if error available
+ */
+bool error_handler_get_last_error(error_info_t* error_info);
+
+/**
+ * @brief Clear error history
+ */
+void error_handler_clear_history(void);
+
+/**
+ * @brief Print error statistics
+ */
+void error_handler_print_stats(void);
+
+/**
+ * @brief Print error history
+ */
+void error_handler_print_history(void);
+
+/**
+ * @brief Check if system has critical errors
+ * @return bool true if critical errors present
+ */
+bool error_handler_has_critical_errors(void);
+
+/**
+ * @brief Get error type string
+ * @param type Error type
+ * @return const char* Error type string
+ */
+const char* error_handler_get_type_string(error_type_t type);
+
+/**
+ * @brief Get error severity string
+ * @param severity Error severity
+ * @return const char* Error severity string
+ */
+const char* error_handler_get_severity_string(error_severity_t severity);
+
+/**
+ * @brief Set error callback for UI notifications
+ * @param callback Callback function
+ */
+void error_handler_set_callback(void (*callback)(const error_info_t* error));
+
+/**
+ * @brief Enable/disable auto recovery
+ * @param enable Enable auto recovery
+ */
+void error_handler_set_auto_recovery(bool enable);
+
+/**
+ * @brief Trigger system recovery for specific error type
+ * @param type Error type
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t error_handler_trigger_recovery(error_type_t type);
+
+#ifdef __cplusplus
+}
+#endif

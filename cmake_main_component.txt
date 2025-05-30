@@ -1,0 +1,64 @@
+idf_component_register(
+    SRCS 
+        # C++ source files
+        "fully_enhanced24v_main_cpp.cpp"
+        "enhanced_elmduino_implementation_with_dtc_vin_implement.cpp"
+        
+        # C source files - Core System
+        "system_init.c"
+        "version.c"
+        "utils.c"
+        "error_handler.c"
+        
+        # C source files - Display & Touch  
+        "display_driver.c"
+        "gt911_touch_driver.c"
+        "lvgl_touch_integration.c"
+        "lvgl_port.c"
+        
+    INCLUDE_DIRS 
+        "."
+        "../components"
+        
+    REQUIRES 
+        # Core ESP-IDF components
+        freertos
+        esp_system
+        esp_timer
+        driver
+        esp_adc
+        log
+        nvs_flash
+        
+        # Memory components
+        esp_psram
+        spi_flash
+        esp_partition
+        spiffs
+        
+        # Hardware abstraction
+        soc
+        hal
+        esp_rom
+        esp_hw_support
+        esp_common
+        
+        # USB Host components
+        usb
+        tinyusb
+        
+        # Display components
+        esp_lcd
+        
+        # LVGL component
+        lvgl
+        
+    PRIV_REQUIRES
+        # GPIO and I2C drivers
+        esp_driver_gpio
+        esp_driver_i2c
+        
+    EMBED_FILES
+        # Optional: Embed any binary files here
+        # "assets/logo.bin"
+)

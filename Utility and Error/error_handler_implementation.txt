@@ -1,0 +1,363 @@
+/*
+ * Error Handler Implementation
+ */
+
+#include "error_handler.h"
+#include "utils.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include <string.h>
+
+static const char *TAG = "ERROR_HANDLER";
+
+// ===== PRIVATE VARIABLES =====
+static error_info_t error_history[MAX_ERROR_HISTORY];
+static uint32_t error_counts[ERROR_TYPE_MAX];
+static uint32_t error_history_index = 0;
+static uint32_t total_errors = 0;
+static bool initialized = false;
+static SemaphoreHandle_t error_mutex = NULL;
+static void (*error_callback)(const error_info_t* error) = NULL;
+static bool auto_recovery_enabled = ERROR_AUTO_RECOVERY_ENABLED;
+
+// ===== ERROR TYPE STRINGS =====
+static const char* error_type_strings[ERROR_TYPE_MAX] = {
+    "SYSTEM",
+    "USB_HOST",
+    "DISPLAY",
+    "TOUCH",
+    "OBD2",
+    "DTC",
+    "VIN",
+    "MEMORY",
+    "COMMUNICATION",
+    "HARDWARE"
+};
+
+// ===== ERROR SEVERITY STRINGS =====
+static const char* error_severity_strings[] = {
+    "INFO",
+    "WARNING", 
+    "ERROR",
+    "CRITICAL",
+    "FATAL"
+};
+
+// ===== PRIVATE FUNCTIONS =====
+static void log_error(const error_info_t* error)
+{
+    const char* type_str = error_handler_get_type_string(error->type);
+    const char* severity_str = error_handler_get_severity_string(error->severity);
+    
+    switch (error->severity) {
+        case ERROR_SEVERITY_INFO:
+            ESP_LOGI(TAG, "[%s] %s: %s (ESP_ERR: 0x%x) at %s:%d in %s()", 
+                     severity_str, type_str, error->description, 
+                     error->esp_error, error->file, error->line, error->function);
+            break;
+        case ERROR_SEVERITY_WARNING:
+            ESP_LOGW(TAG, "[%s] %s: %s (ESP_ERR: 0x%x) at %s:%d in %s()", 
+                     severity_str, type_str, error->description, 
+                     error->esp_error, error->file, error->line, error->function);
+            break;
+        case ERROR_SEVERITY_ERROR:
+        case ERROR_SEVERITY_CRITICAL:
+        case ERROR_SEVERITY_FATAL:
+            ESP_LOGE(TAG, "[%s] %s: %s (ESP_ERR: 0x%x) at %s:%d in %s()", 
+                     severity_str, type_str, error->description, 
+                     error->esp_error, error->file, error->line, error->function);
+            break;
+    }
+}
+
+static void attempt_auto_recovery(const error_info_t* error)
+{
+    if (!auto_recovery_enabled || error->severity < ERROR_SEVERITY_ERROR) {
+        return;
+    }
+    
+    ESP_LOGW(TAG, "Attempting auto-recovery for %s error", 
+             error_handler_get_type_string(error->type));
+    
+    switch (error->type) {
+        case ERROR_TYPE_USB_HOST:
+            // USB host recovery could involve reinitializing USB
+            ESP_LOGI(TAG, "USB Host recovery not implemented");
+            break;
+            
+        case ERROR_TYPE_DISPLAY:
+            // Display recovery could involve reinitializing display
+            ESP_LOGI(TAG, "Display recovery not implemented");
+            break;
+            
+        case ERROR_TYPE_TOUCH:
+            // Touch recovery could involve reinitializing touch controller
+            ESP_LOGI(TAG, "Touch recovery not implemented");
+            break;
+            
+        case ERROR_TYPE_OBD2:
+            // OBD2 recovery could involve reconnection attempt
+            ESP_LOGI(TAG, "OBD2 recovery not implemented");
+            break;
+            
+        default:
+            ESP_LOGD(TAG, "No auto-recovery available for %s errors", 
+                     error_handler_get_type_string(error->type));
+            break;
+    }
+}
+
+// ===== PUBLIC FUNCTIONS =====
+esp_err_t error_handler_init(void)
+{
+    if (initialized) {
+        return ESP_OK;
+    }
+    
+    // Clear error history and counts
+    memset(error_history, 0, sizeof(error_history));
+    memset(error_counts, 0, sizeof(error_counts));
+    error_history_index = 0;
+    total_errors = 0;
+    
+    // Create mutex
+    error_mutex = xSemaphoreCreateMutex();
+    if (!error_mutex) {
+        ESP_LOGE(TAG, "Failed to create error handler mutex");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    initialized = true;
+    ESP_LOGI(TAG, "Error handler initialized");
+    
+    return ESP_OK;
+}
+
+void error_handler_report(error_type_t type, error_severity_t severity, 
+                         esp_err_t esp_error, const char* file, uint32_t line,
+                         const char* function, const char* description)
+{
+    if (!initialized || type >= ERROR_TYPE_MAX) {
+        return;
+    }
+    
+    // Take mutex
+    if (xSemaphoreTake(error_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+    
+    // Create error info
+    error_info_t* error = &error_history[error_history_index];
+    error->type = type;
+    error->severity = severity;
+    error->esp_error = esp_error;
+    error->timestamp = get_time_ms();
+    error->line = line;
+    error->file = file ? file : "unknown";
+    error->function = function ? function : "unknown";
+    
+    if (description) {
+        safe_strcpy(error->description, description, sizeof(error->description));
+    } else {
+        safe_strcpy(error->description, "No description", sizeof(error->description));
+    }
+    
+    // Update counters
+    error_counts[type]++;
+    total_errors++;
+    error_history_index = (error_history_index + 1) % MAX_ERROR_HISTORY;
+    
+    // Release mutex
+    xSemaphoreGive(error_mutex);
+    
+    // Log error
+    log_error(error);
+    
+    // Call callback if registered
+    if (error_callback) {
+        error_callback(error);
+    }
+    
+    // Attempt auto-recovery
+    attempt_auto_recovery(error);
+    
+    // Handle fatal errors
+    if (severity == ERROR_SEVERITY_FATAL) {
+        ESP_LOGE(TAG, "FATAL ERROR - System may require restart");
+        error_handler_print_history();
+        // Could trigger system restart here if needed
+    }
+}
+
+uint32_t error_handler_get_count(error_type_t type)
+{
+    if (!initialized || type >= ERROR_TYPE_MAX) {
+        return 0;
+    }
+    
+    return error_counts[type];
+}
+
+uint32_t error_handler_get_total_count(void)
+{
+    return total_errors;
+}
+
+bool error_handler_get_last_error(error_info_t* error_info)
+{
+    if (!initialized || !error_info || total_errors == 0) {
+        return false;
+    }
+    
+    if (xSemaphoreTake(error_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+    
+    uint32_t last_index = (error_history_index - 1 + MAX_ERROR_HISTORY) % MAX_ERROR_HISTORY;
+    memcpy(error_info, &error_history[last_index], sizeof(error_info_t));
+    
+    xSemaphoreGive(error_mutex);
+    return true;
+}
+
+void error_handler_clear_history(void)
+{
+    if (!initialized) {
+        return;
+    }
+    
+    if (xSemaphoreTake(error_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        memset(error_history, 0, sizeof(error_history));
+        memset(error_counts, 0, sizeof(error_counts));
+        error_history_index = 0;
+        total_errors = 0;
+        xSemaphoreGive(error_mutex);
+        
+        ESP_LOGI(TAG, "Error history cleared");
+    }
+}
+
+void error_handler_print_stats(void)
+{
+    if (!initialized) {
+        return;
+    }
+    
+    ESP_LOGI(TAG, "=== Error Statistics ===");
+    ESP_LOGI(TAG, "Total Errors: %d", total_errors);
+    
+    for (int i = 0; i < ERROR_TYPE_MAX; i++) {
+        if (error_counts[i] > 0) {
+            ESP_LOGI(TAG, "  %s: %d", error_type_strings[i], error_counts[i]);
+        }
+    }
+}
+
+void error_handler_print_history(void)
+{
+    if (!initialized || total_errors == 0) {
+        ESP_LOGI(TAG, "No errors in history");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "=== Error History (Recent %d) ===", 
+             total_errors < MAX_ERROR_HISTORY ? total_errors : MAX_ERROR_HISTORY);
+    
+    if (xSemaphoreTake(error_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        uint32_t count = total_errors < MAX_ERROR_HISTORY ? total_errors : MAX_ERROR_HISTORY;
+        uint32_t start_index = (error_history_index - count + MAX_ERROR_HISTORY) % MAX_ERROR_HISTORY;
+        
+        for (uint32_t i = 0; i < count; i++) {
+            uint32_t idx = (start_index + i) % MAX_ERROR_HISTORY;
+            error_info_t* error = &error_history[idx];
+            
+            char time_str[32];
+            format_duration(error->timestamp, time_str, sizeof(time_str));
+            
+            ESP_LOGI(TAG, "%d. [%s] %s: %s at %s:%d (%s)", 
+                     i + 1,
+                     error_handler_get_severity_string(error->severity),
+                     error_handler_get_type_string(error->type),
+                     error->description,
+                     error->file,
+                     error->line,
+                     time_str);
+        }
+        
+        xSemaphoreGive(error_mutex);
+    }
+}
+
+bool error_handler_has_critical_errors(void)
+{
+    if (!initialized) {
+        return false;
+    }
+    
+    // Check recent errors for critical/fatal severity
+    if (xSemaphoreTake(error_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        uint32_t count = total_errors < MAX_ERROR_HISTORY ? total_errors : MAX_ERROR_HISTORY;
+        
+        for (uint32_t i = 0; i < count; i++) {
+            error_info_t* error = &error_history[i];
+            if (error->severity >= ERROR_SEVERITY_CRITICAL) {
+                xSemaphoreGive(error_mutex);
+                return true;
+            }
+        }
+        
+        xSemaphoreGive(error_mutex);
+    }
+    
+    return false;
+}
+
+const char* error_handler_get_type_string(error_type_t type)
+{
+    if (type >= ERROR_TYPE_MAX) {
+        return "UNKNOWN";
+    }
+    return error_type_strings[type];
+}
+
+const char* error_handler_get_severity_string(error_severity_t severity)
+{
+    if (severity >= sizeof(error_severity_strings) / sizeof(error_severity_strings[0])) {
+        return "UNKNOWN";
+    }
+    return error_severity_strings[severity];
+}
+
+void error_handler_set_callback(void (*callback)(const error_info_t* error))
+{
+    error_callback = callback;
+}
+
+void error_handler_set_auto_recovery(bool enable)
+{
+    auto_recovery_enabled = enable;
+    ESP_LOGI(TAG, "Auto-recovery %s", enable ? "enabled" : "disabled");
+}
+
+esp_err_t error_handler_trigger_recovery(error_type_t type)
+{
+    if (!initialized || type >= ERROR_TYPE_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "Manual recovery triggered for %s", error_handler_get_type_string(type));
+    
+    // Create dummy error for recovery attempt
+    error_info_t recovery_error = {
+        .type = type,
+        .severity = ERROR_SEVERITY_ERROR,
+        .esp_error = ESP_OK,
+        .timestamp = get_time_ms()
+    };
+    
+    attempt_auto_recovery(&recovery_error);
+    
+    return ESP_OK;
+}

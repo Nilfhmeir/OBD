@@ -1,0 +1,43 @@
+/*
+ * System Initialization Header for ESP32-8048S070
+ */
+
+#pragma once
+
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief Early system initialization (NVS, PSRAM, etc.)
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t system_early_init(void);
+
+/**
+ * @brief Hardware initialization (GPIO, I2C, etc.)
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t system_hardware_init(void);
+
+/**
+ * @brief Late system initialization
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t system_late_init(void);
+
+/**
+ * @brief Print memory information
+ */
+void system_print_memory_info(void);
+
+/**
+ * @brief Print chip information
+ */
+void system_print_chip_info(void);
+
+#ifdef __cplusplus
+}
+#endif

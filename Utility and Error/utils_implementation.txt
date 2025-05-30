@@ -1,0 +1,375 @@
+/*
+ * Utility Functions Implementation
+ */
+
+#include "utils.h"
+#include "esp_timer.h"
+#include "esp_log.h"
+#include <string.h>
+#include <stdio.h>
+#include <ctype.h>
+#include <math.h>
+
+static const char *TAG = "UTILS";
+
+// ===== STRING UTILITIES =====
+esp_err_t safe_strcpy(char *dest, const char *src, size_t dest_size)
+{
+    if (!dest || !src || dest_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    strncpy(dest, src, dest_size - 1);
+    dest[dest_size - 1] = '\0';
+    return ESP_OK;
+}
+
+esp_err_t safe_strcat(char *dest, const char *src, size_t dest_size)
+{
+    if (!dest || !src || dest_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    size_t dest_len = strlen(dest);
+    if (dest_len >= dest_size - 1) {
+        return ESP_ERR_NO_MEM;
+    }
+    
+    strncat(dest, src, dest_size - dest_len - 1);
+    return ESP_OK;
+}
+
+void str_to_upper(char *str)
+{
+    if (!str) return;
+    
+    for (int i = 0; str[i]; i++) {
+        str[i] = toupper((unsigned char)str[i]);
+    }
+}
+
+void str_to_lower(char *str)
+{
+    if (!str) return;
+    
+    for (int i = 0; str[i]; i++) {
+        str[i] = tolower((unsigned char)str[i]);
+    }
+}
+
+void str_trim(char *str)
+{
+    if (!str) return;
+    
+    // Trim leading whitespace
+    char *start = str;
+    while (isspace((unsigned char)*start)) {
+        start++;
+    }
+    
+    // Trim trailing whitespace
+    char *end = start + strlen(start) - 1;
+    while (end > start && isspace((unsigned char)*end)) {
+        end--;
+    }
+    
+    // Copy trimmed string
+    size_t len = end - start + 1;
+    memmove(str, start, len);
+    str[len] = '\0';
+}
+
+// ===== CONVERSION UTILITIES =====
+uint8_t hex_char_to_int(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    } else if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    } else if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    return 0;
+}
+
+uint32_t hex_string_to_int(const char *hex_str, size_t len)
+{
+    if (!hex_str || len == 0) return 0;
+    
+    uint32_t result = 0;
+    for (size_t i = 0; i < len && hex_str[i]; i++) {
+        result = (result << 4) | hex_char_to_int(hex_str[i]);
+    }
+    return result;
+}
+
+void int_to_hex_string(uint32_t value, char *hex_str, size_t len)
+{
+    if (!hex_str || len < 3) return;
+    
+    snprintf(hex_str, len, "%X", value);
+}
+
+void float_to_string(float value, char *str, size_t str_len, int precision)
+{
+    if (!str || str_len < 2) return;
+    
+    if (isnan(value)) {
+        safe_strcpy(str, "NaN", str_len);
+    } else if (isinf(value)) {
+        safe_strcpy(str, value > 0 ? "Inf" : "-Inf", str_len);
+    } else {
+        snprintf(str, str_len, "%.*f", precision, value);
+    }
+}
+
+// ===== TIME UTILITIES =====
+uint32_t get_time_ms(void)
+{
+    return esp_timer_get_time() / 1000;
+}
+
+uint64_t get_time_us(void)
+{
+    return esp_timer_get_time();
+}
+
+bool is_timeout(uint32_t start_time, uint32_t timeout_ms)
+{
+    return (get_time_ms() - start_time) >= timeout_ms;
+}
+
+void format_duration(uint32_t duration_ms, char *str, size_t str_len)
+{
+    if (!str || str_len < 10) return;
+    
+    uint32_t hours = duration_ms / 3600000;
+    uint32_t minutes = (duration_ms % 3600000) / 60000;
+    uint32_t seconds = (duration_ms % 60000) / 1000;
+    
+    if (hours > 0) {
+        snprintf(str, str_len, "%02d:%02d:%02d", hours, minutes, seconds);
+    } else {
+        snprintf(str, str_len, "%02d:%02d", minutes, seconds);
+    }
+}
+
+// ===== MATH UTILITIES =====
+float lerp(float x, float x0, float x1, float y0, float y1)
+{
+    if (x1 == x0) return y0;
+    return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+}
+
+float clamp_float(float value, float min, float max)
+{
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+}
+
+int32_t clamp_int(int32_t value, int32_t min, int32_t max)
+{
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+}
+
+float moving_average(float new_value, float current_avg, uint32_t sample_count)
+{
+    if (sample_count == 0) return new_value;
+    return current_avg + (new_value - current_avg) / (sample_count + 1);
+}
+
+// ===== DATA VALIDATION =====
+bool is_valid_vin(const char *vin)
+{
+    if (!vin || strlen(vin) != 17) {
+        return false;
+    }
+    
+    // Check for invalid characters (I, O, Q not allowed)
+    for (int i = 0; i < 17; i++) {
+        char c = vin[i];
+        if (c == 'I' || c == 'O' || c == 'Q') {
+            return false;
+        }
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z'))) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+bool is_valid_dtc(const char *dtc)
+{
+    if (!dtc || strlen(dtc) != 5) {
+        return false;
+    }
+    
+    // First character must be P, C, B, or U
+    char prefix = dtc[0];
+    if (prefix != 'P' && prefix != 'C' && prefix != 'B' && prefix != 'U') {
+        return false;
+    }
+    
+    // Remaining characters must be hex digits
+    for (int i = 1; i < 5; i++) {
+        char c = dtc[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+bool is_valid_voltage(float voltage)
+{
+    return voltage >= 5.0f && voltage <= 50.0f; // Reasonable range for automotive
+}
+
+bool is_valid_temperature(float temp)
+{
+    return temp >= -50.0f && temp <= 200.0f; // Reasonable range for automotive
+}
+
+// ===== CHECKSUM/CRC UTILITIES =====
+uint8_t calculate_checksum(const uint8_t *data, size_t len)
+{
+    if (!data || len == 0) return 0;
+    
+    uint8_t checksum = 0;
+    for (size_t i = 0; i < len; i++) {
+        checksum += data[i];
+    }
+    return checksum;
+}
+
+uint16_t calculate_crc16(const uint8_t *data, size_t len)
+{
+    if (!data || len == 0) return 0;
+    
+    uint16_t crc = 0xFFFF;
+    
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1) {
+                crc = (crc >> 1) ^ 0xA001;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    
+    return crc;
+}
+
+// ===== BUFFER UTILITIES =====
+void circular_buffer_init(circular_buffer_t *cb, uint8_t *buffer, size_t size)
+{
+    if (!cb || !buffer || size == 0) return;
+    
+    cb->buffer = buffer;
+    cb->size = size;
+    cb->head = 0;
+    cb->tail = 0;
+    cb->count = 0;
+}
+
+size_t circular_buffer_write(circular_buffer_t *cb, const uint8_t *data, size_t len)
+{
+    if (!cb || !data || len == 0) return 0;
+    
+    size_t written = 0;
+    
+    for (size_t i = 0; i < len && cb->count < cb->size; i++) {
+        cb->buffer[cb->head] = data[i];
+        cb->head = (cb->head + 1) % cb->size;
+        cb->count++;
+        written++;
+    }
+    
+    return written;
+}
+
+size_t circular_buffer_read(circular_buffer_t *cb, uint8_t *data, size_t len)
+{
+    if (!cb || !data || len == 0) return 0;
+    
+    size_t read = 0;
+    
+    for (size_t i = 0; i < len && cb->count > 0; i++) {
+        data[i] = cb->buffer[cb->tail];
+        cb->tail = (cb->tail + 1) % cb->size;
+        cb->count--;
+        read++;
+    }
+    
+    return read;
+}
+
+size_t circular_buffer_available(const circular_buffer_t *cb)
+{
+    if (!cb) return 0;
+    return cb->count;
+}
+
+// ===== DIAGNOSTIC UTILITIES =====
+void parse_dtc_code(uint16_t dtc_raw, char *dtc_str, size_t str_len)
+{
+    if (!dtc_str || str_len < 6) return;
+    
+    // Determine prefix based on first two bits
+    char prefix;
+    uint8_t first_bits = (dtc_raw >> 14) & 0x03;
+    
+    switch (first_bits) {
+        case 0: prefix = 'P'; break; // Powertrain
+        case 1: prefix = 'C'; break; // Chassis
+        case 2: prefix = 'B'; break; // Body
+        case 3: prefix = 'U'; break; // Network/Communication
+        default: prefix = 'P'; break;
+    }
+    
+    // Extract digits
+    uint8_t digit1 = (dtc_raw >> 12) & 0x03;
+    uint8_t digit2 = (dtc_raw >> 8) & 0x0F;
+    uint8_t digit3 = (dtc_raw >> 4) & 0x0F;
+    uint8_t digit4 = dtc_raw & 0x0F;
+    
+    snprintf(dtc_str, str_len, "%c%01X%01X%01X%01X", prefix, digit1, digit2, digit3, digit4);
+}
+
+void format_speed(float kph, bool use_mph, char *str, size_t str_len)
+{
+    if (!str || str_len < 10) return;
+    
+    if (use_mph) {
+        float mph = kph * 0.621371f;
+        snprintf(str, str_len, "%.1f mph", mph);
+    } else {
+        snprintf(str, str_len, "%.1f km/h", kph);
+    }
+}
+
+void format_temperature(float celsius, bool use_fahrenheit, char *str, size_t str_len)
+{
+    if (!str || str_len < 10) return;
+    
+    if (use_fahrenheit) {
+        float fahrenheit = celsius * 9.0f / 5.0f + 32.0f;
+        snprintf(str, str_len, "%.1f°F", fahrenheit);
+    } else {
+        snprintf(str, str_len, "%.1f°C", celsius);
+    }
+}
+
+void format_voltage(float voltage, char *str, size_t str_len)
+{
+    if (!str || str_len < 8) return;
+    
+    snprintf(str, str_len, "%.2fV", voltage);
+}

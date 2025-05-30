@@ -1,0 +1,91 @@
+/*
+ * System Initialization for ESP32-8048S070 Enhanced OBD2 Dashboard
+ */
+
+#include "system_init.h"
+#include "esp_system.h"
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_psram.h"
+#include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+static const char *TAG = "SYSTEM_INIT";
+
+esp_err_t system_early_init(void)
+{
+    ESP_LOGI(TAG, "=== ESP32-8048S070 Enhanced OBD2 Dashboard ===");
+    ESP_LOGI(TAG, "Early system initialization...");
+    
+    // Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS partition truncated, erasing...");
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    ESP_LOGI(TAG, "✓ NVS Flash initialized");
+    
+    // Check PSRAM
+    if (esp_psram_is_initialized()) {
+        size_t psram_size = esp_psram_get_size();
+        ESP_LOGI(TAG, "✓ PSRAM initialized: %d MB", psram_size / (1024 * 1024));
+    } else {
+        ESP_LOGW(TAG, "⚠ PSRAM not initialized");
+    }
+    
+    // Print memory info
+    system_print_memory_info();
+    
+    return ESP_OK;
+}
+
+esp_err_t system_hardware_init(void)
+{
+    ESP_LOGI(TAG, "Hardware initialization...");
+    
+    // ESP32-S3 specific initialization would go here
+    // GPIO, I2C, SPI, etc.
+    
+    ESP_LOGI(TAG, "✓ Hardware initialized");
+    return ESP_OK;
+}
+
+esp_err_t system_late_init(void)
+{
+    ESP_LOGI(TAG, "Late system initialization...");
+    
+    // Any late initialization tasks
+    
+    ESP_LOGI(TAG, "✓ System initialization complete");
+    return ESP_OK;
+}
+
+void system_print_memory_info(void)
+{
+    ESP_LOGI(TAG, "=== Memory Information ===");
+    ESP_LOGI(TAG, "Free heap: %d bytes", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "Min free heap: %d bytes", esp_get_minimum_free_heap_size());
+    ESP_LOGI(TAG, "Free PSRAM: %d bytes", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    ESP_LOGI(TAG, "Free internal: %d bytes", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+}
+
+void system_print_chip_info(void)
+{
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+    
+    ESP_LOGI(TAG, "=== Chip Information ===");
+    ESP_LOGI(TAG, "Chip: %s", CONFIG_IDF_TARGET);
+    ESP_LOGI(TAG, "Cores: %d", chip_info.cores);
+    ESP_LOGI(TAG, "Features: %s%s%s%s",
+             (chip_info.features & CHIP_FEATURE_WIFI_BGN) ? "WiFi " : "",
+             (chip_info.features & CHIP_FEATURE_BT) ? "BT " : "",
+             (chip_info.features & CHIP_FEATURE_BLE) ? "BLE " : "",
+             (chip_info.features & CHIP_FEATURE_IEEE802154) ? "802.15.4 " : "");
+    ESP_LOGI(TAG, "Flash: %d MB %s", 
+             spi_flash_get_chip_size() / (1024 * 1024),
+             (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "embedded" : "external");
+}

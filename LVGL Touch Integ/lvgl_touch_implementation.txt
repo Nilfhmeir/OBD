@@ -1,0 +1,235 @@
+/*
+ * LVGL Touch Integration Implementation for ESP32-8048S070
+ */
+
+#include "lvgl_touch_integration.h"
+#include "gt911_touch_driver.h"
+#include "esp32_8048s070_config.h"
+#include "lvgl.h"
+#include "esp_log.h"
+
+static const char *TAG = "LVGL_TOUCH";
+static gt911_handle_t gt911_handle;
+
+// LVGL Touch Read Callback
+static void lvgl_touch_read_cb(lv_indev_drv_t *indev_drv, lv_indev_data_t *data)
+{
+    // Read touch data from GT911
+    esp_err_t ret = gt911_read_touch_data(&gt911_handle);
+    
+    if (ret == ESP_OK && gt911_is_pressed(&gt911_handle)) {
+        // Get first touch point
+        gt911_touch_point_t point = gt911_get_touch_point(&gt911_handle, 0);
+        
+        data->point.x = point.x;
+        data->point.y = point.y;
+        data->state = LV_INDEV_STATE_PRESSED;
+        
+        ESP_LOGD(TAG, "Touch: x=%d, y=%d, count=%d", 
+                 point.x, point.y, gt911_get_touch_count(&gt911_handle));
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+}
+
+// Initialize Touch Input for LVGL
+esp_err_t lvgl_touch_init(void)
+{
+    ESP_LOGI(TAG, "Initializing LVGL touch input...");
+    
+    // Configure GT911
+    gt911_config_t gt911_config = {
+        .i2c_port = I2C_NUM_0,
+        .sda_pin = BOARD_TOUCH_I2C_SDA,     // GPIO17
+        .scl_pin = BOARD_TOUCH_I2C_SCL,     // GPIO18
+        .int_pin = BOARD_TOUCH_I2C_INT,     // GPIO16
+        .rst_pin = BOARD_TOUCH_I2C_RST,     // -1 (connected to EN)
+        .max_x = BOARD_LCD_H_RES,           // 800
+        .max_y = BOARD_LCD_V_RES,           // 480
+        .swap_xy = false,
+        .invert_x = false,
+        .invert_y = false,
+    };
+    
+    // Initialize GT911 touch controller
+    esp_err_t ret = gt911_init(&gt911_handle, &gt911_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize GT911: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Register touch input device with LVGL
+    static lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    indev_drv.read_cb = lvgl_touch_read_cb;
+    
+    lv_indev_t *touch_indev = lv_indev_drv_register(&indev_drv);
+    if (!touch_indev) {
+        ESP_LOGE(TAG, "Failed to register LVGL touch input device");
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(TAG, "LVGL touch input initialized successfully");
+    ESP_LOGI(TAG, "Touch controller: GT911");
+    ESP_LOGI(TAG, "Resolution: %dx%d", gt911_config.max_x, gt911_config.max_y);
+    ESP_LOGI(TAG, "I2C pins: SDA=%d, SCL=%d, INT=%d", 
+             gt911_config.sda_pin, gt911_config.scl_pin, gt911_config.int_pin);
+    
+    return ESP_OK;
+}
+
+esp_err_t lvgl_touch_deinit(void)
+{
+    return gt911_deinit(&gt911_handle);
+}
+
+// Touch Calibration Function
+esp_err_t lvgl_touch_calibrate(void)
+{
+    ESP_LOGI(TAG, "Starting touch calibration...");
+    
+    // Create calibration screen
+    lv_obj_t *cal_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(cal_screen, lv_color_black(), 0);
+    
+    // Calibration instructions
+    lv_obj_t *cal_label = lv_label_create(cal_screen);
+    lv_label_set_text(cal_label, 
+        "Touch Calibration\n\n"
+        "Touch the center of each crosshair\n"
+        "when it appears on screen");
+    lv_obj_set_style_text_color(cal_label, lv_color_white(), 0);
+    lv_obj_set_style_text_align(cal_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(cal_label);
+    
+    lv_scr_load(cal_screen);
+    
+    // Calibration points (corners and center)
+    struct {
+        uint16_t x, y;
+    } cal_points[] = {
+        {50, 50},       // Top-left
+        {750, 50},      // Top-right
+        {750, 430},     // Bottom-right
+        {50, 430},      // Bottom-left
+        {400, 240},     // Center
+    };
+    
+    for (int i = 0; i < 5; i++) {
+        // Clear screen
+        lv_obj_clean(cal_screen);
+        
+        // Show crosshair
+        lv_obj_t *crosshair = lv_obj_create(cal_screen);
+        lv_obj_set_size(crosshair, 20, 20);
+        lv_obj_set_pos(crosshair, cal_points[i].x - 10, cal_points[i].y - 10);
+        lv_obj_set_style_bg_color(crosshair, lv_color_white(), 0);
+        lv_obj_set_style_border_width(crosshair, 2, 0);
+        lv_obj_set_style_border_color(crosshair, lv_color_red(), 0);
+        
+        // Instructions
+        lv_obj_t *inst_label = lv_label_create(cal_screen);
+        lv_label_set_text_fmt(inst_label, "Touch point %d/5", i + 1);
+        lv_obj_set_style_text_color(inst_label, lv_color_white(), 0);
+        lv_obj_align(inst_label, LV_ALIGN_TOP_MID, 0, 20);
+        
+        // Wait for touch
+        bool touched = false;
+        while (!touched) {
+            if (gt911_read_touch_data(&gt911_handle) == ESP_OK && 
+                gt911_is_pressed(&gt911_handle)) {
+                
+                gt911_touch_point_t point = gt911_get_touch_point(&gt911_handle, 0);
+                ESP_LOGI(TAG, "Touch #%d: X=%d, Y=%d, Size=%d, Points=%d",
+                         touch_count, point.x, point.y, point.size,
+                         gt911_get_touch_count(&gt911_handle));
+            }
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    lv_obj_del(test_screen);
+    ESP_LOGI(TAG, "Touch test completed. Total touches: %d", touch_count);
+}(TAG, "Calibration point %d: expected(%d,%d), actual(%d,%d)",
+                         i + 1, cal_points[i].x, cal_points[i].y, point.x, point.y);
+                
+                touched = true;
+                
+                // Wait for release
+                while (gt911_is_pressed(&gt911_handle)) {
+                    gt911_read_touch_data(&gt911_handle);
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    
+    // Calibration complete
+    lv_obj_clean(cal_screen);
+    lv_obj_t *complete_label = lv_label_create(cal_screen);
+    lv_label_set_text(complete_label, "Calibration Complete!\nTouch screen to continue...");
+    lv_obj_set_style_text_color(complete_label, lv_color_green(), 0);
+    lv_obj_set_style_text_align(complete_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(complete_label);
+    
+    // Wait for final touch
+    while (true) {
+        if (gt911_read_touch_data(&gt911_handle) == ESP_OK && 
+            gt911_is_pressed(&gt911_handle)) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    lv_obj_del(cal_screen);
+    
+    ESP_LOGI(TAG, "Touch calibration completed");
+    return ESP_OK;
+}
+
+// Touch Test Function
+void lvgl_touch_test(void)
+{
+    ESP_LOGI(TAG, "Starting touch test...");
+    
+    // Create test screen
+    lv_obj_t *test_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(test_screen, lv_color_black(), 0);
+    
+    lv_obj_t *title = lv_label_create(test_screen);
+    lv_label_set_text(title, "Touch Test - Touch anywhere on screen");
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+    
+    lv_obj_t *coords_label = lv_label_create(test_screen);
+    lv_label_set_text(coords_label, "Touch coordinates will appear here");
+    lv_obj_set_style_text_color(coords_label, lv_color_yellow(), 0);
+    lv_obj_align(coords_label, LV_ALIGN_CENTER, 0, 0);
+    
+    lv_obj_t *exit_label = lv_label_create(test_screen);
+    lv_label_set_text(exit_label, "Test will exit automatically after 30 seconds");
+    lv_obj_set_style_text_color(exit_label, lv_color_make(150, 150, 150), 0);
+    lv_obj_align(exit_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+    
+    lv_scr_load(test_screen);
+    
+    uint32_t start_time = esp_timer_get_time() / 1000;
+    uint32_t touch_count = 0;
+    
+    while ((esp_timer_get_time() / 1000 - start_time) < 30000) {
+        if (gt911_read_touch_data(&gt911_handle) == ESP_OK) {
+            if (gt911_is_pressed(&gt911_handle)) {
+                touch_count++;
+                gt911_touch_point_t point = gt911_get_touch_point(&gt911_handle, 0);
+                
+                lv_label_set_text_fmt(coords_label, 
+                    "Touch #%d\nX: %d, Y: %d\nSize: %d\nPoints: %d",
+                    touch_count, point.x, point.y, point.size, 
+                    gt911_get_touch_count(&gt911_handle));
+                
+                ESP_LOGI

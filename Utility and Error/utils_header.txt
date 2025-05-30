@@ -1,0 +1,282 @@
+/*
+ * Utility Functions for ESP32-8048S070 Enhanced OBD2 Dashboard
+ */
+
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// ===== STRING UTILITIES =====
+/**
+ * @brief Safe string copy with null termination guarantee
+ * @param dest Destination buffer
+ * @param src Source string
+ * @param dest_size Size of destination buffer
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t safe_strcpy(char *dest, const char *src, size_t dest_size);
+
+/**
+ * @brief Safe string concatenation
+ * @param dest Destination buffer
+ * @param src Source string
+ * @param dest_size Size of destination buffer
+ * @return esp_err_t ESP_OK on success
+ */
+esp_err_t safe_strcat(char *dest, const char *src, size_t dest_size);
+
+/**
+ * @brief Convert string to uppercase
+ * @param str String to convert
+ */
+void str_to_upper(char *str);
+
+/**
+ * @brief Convert string to lowercase
+ * @param str String to convert
+ */
+void str_to_lower(char *str);
+
+/**
+ * @brief Trim whitespace from string
+ * @param str String to trim
+ */
+void str_trim(char *str);
+
+// ===== CONVERSION UTILITIES =====
+/**
+ * @brief Convert hex character to integer
+ * @param c Hex character
+ * @return uint8_t Integer value (0-15)
+ */
+uint8_t hex_char_to_int(char c);
+
+/**
+ * @brief Convert hex string to integer
+ * @param hex_str Hex string
+ * @param len Length of hex string
+ * @return uint32_t Integer value
+ */
+uint32_t hex_string_to_int(const char *hex_str, size_t len);
+
+/**
+ * @brief Convert integer to hex string
+ * @param value Integer value
+ * @param hex_str Output hex string
+ * @param len Length of output buffer
+ */
+void int_to_hex_string(uint32_t value, char *hex_str, size_t len);
+
+/**
+ * @brief Convert float to string with precision
+ * @param value Float value
+ * @param str Output string
+ * @param str_len Length of output buffer
+ * @param precision Decimal precision
+ */
+void float_to_string(float value, char *str, size_t str_len, int precision);
+
+// ===== TIME UTILITIES =====
+/**
+ * @brief Get current time in milliseconds
+ * @return uint32_t Time in milliseconds
+ */
+uint32_t get_time_ms(void);
+
+/**
+ * @brief Get current time in microseconds
+ * @return uint64_t Time in microseconds
+ */
+uint64_t get_time_us(void);
+
+/**
+ * @brief Check if timeout has elapsed
+ * @param start_time Start time in milliseconds
+ * @param timeout_ms Timeout in milliseconds
+ * @return bool true if timeout elapsed
+ */
+bool is_timeout(uint32_t start_time, uint32_t timeout_ms);
+
+/**
+ * @brief Format time duration as string
+ * @param duration_ms Duration in milliseconds
+ * @param str Output string
+ * @param str_len Length of output buffer
+ */
+void format_duration(uint32_t duration_ms, char *str, size_t str_len);
+
+// ===== MATH UTILITIES =====
+/**
+ * @brief Linear interpolation
+ * @param x Input value
+ * @param x0 Input min
+ * @param x1 Input max
+ * @param y0 Output min
+ * @param y1 Output max
+ * @return float Interpolated value
+ */
+float lerp(float x, float x0, float x1, float y0, float y1);
+
+/**
+ * @brief Clamp value between min and max
+ * @param value Input value
+ * @param min Minimum value
+ * @param max Maximum value
+ * @return float Clamped value
+ */
+float clamp_float(float value, float min, float max);
+
+/**
+ * @brief Clamp integer value between min and max
+ * @param value Input value
+ * @param min Minimum value
+ * @param max Maximum value
+ * @return int32_t Clamped value
+ */
+int32_t clamp_int(int32_t value, int32_t min, int32_t max);
+
+/**
+ * @brief Calculate moving average
+ * @param new_value New value
+ * @param current_avg Current average
+ * @param sample_count Number of samples
+ * @return float Updated average
+ */
+float moving_average(float new_value, float current_avg, uint32_t sample_count);
+
+// ===== DATA VALIDATION =====
+/**
+ * @brief Validate VIN format
+ * @param vin VIN string
+ * @return bool true if valid
+ */
+bool is_valid_vin(const char *vin);
+
+/**
+ * @brief Validate DTC format
+ * @param dtc DTC string
+ * @return bool true if valid
+ */
+bool is_valid_dtc(const char *dtc);
+
+/**
+ * @brief Validate voltage range
+ * @param voltage Voltage value
+ * @return bool true if in valid range
+ */
+bool is_valid_voltage(float voltage);
+
+/**
+ * @brief Validate temperature range
+ * @param temp Temperature value
+ * @return bool true if in valid range
+ */
+bool is_valid_temperature(float temp);
+
+// ===== CHECKSUM/CRC UTILITIES =====
+/**
+ * @brief Calculate simple checksum
+ * @param data Data buffer
+ * @param len Data length
+ * @return uint8_t Checksum value
+ */
+uint8_t calculate_checksum(const uint8_t *data, size_t len);
+
+/**
+ * @brief Calculate CRC16
+ * @param data Data buffer
+ * @param len Data length
+ * @return uint16_t CRC16 value
+ */
+uint16_t calculate_crc16(const uint8_t *data, size_t len);
+
+// ===== BUFFER UTILITIES =====
+/**
+ * @brief Circular buffer structure
+ */
+typedef struct {
+    uint8_t *buffer;
+    size_t size;
+    size_t head;
+    size_t tail;
+    size_t count;
+} circular_buffer_t;
+
+/**
+ * @brief Initialize circular buffer
+ * @param cb Circular buffer
+ * @param buffer Buffer memory
+ * @param size Buffer size
+ */
+void circular_buffer_init(circular_buffer_t *cb, uint8_t *buffer, size_t size);
+
+/**
+ * @brief Write to circular buffer
+ * @param cb Circular buffer
+ * @param data Data to write
+ * @param len Data length
+ * @return size_t Bytes written
+ */
+size_t circular_buffer_write(circular_buffer_t *cb, const uint8_t *data, size_t len);
+
+/**
+ * @brief Read from circular buffer
+ * @param cb Circular buffer
+ * @param data Output buffer
+ * @param len Maximum bytes to read
+ * @return size_t Bytes read
+ */
+size_t circular_buffer_read(circular_buffer_t *cb, uint8_t *data, size_t len);
+
+/**
+ * @brief Get available bytes in circular buffer
+ * @param cb Circular buffer
+ * @return size_t Available bytes
+ */
+size_t circular_buffer_available(const circular_buffer_t *cb);
+
+// ===== DIAGNOSTIC UTILITIES =====
+/**
+ * @brief Parse DTC code format
+ * @param dtc_raw Raw DTC value
+ * @param dtc_str Output DTC string
+ * @param str_len String buffer length
+ */
+void parse_dtc_code(uint16_t dtc_raw, char *dtc_str, size_t str_len);
+
+/**
+ * @brief Format vehicle speed
+ * @param kph Speed in km/h
+ * @param use_mph Convert to mph
+ * @param str Output string
+ * @param str_len String buffer length
+ */
+void format_speed(float kph, bool use_mph, char *str, size_t str_len);
+
+/**
+ * @brief Format temperature
+ * @param celsius Temperature in Celsius
+ * @param use_fahrenheit Convert to Fahrenheit
+ * @param str Output string
+ * @param str_len String buffer length
+ */
+void format_temperature(float celsius, bool use_fahrenheit, char *str, size_t str_len);
+
+/**
+ * @brief Format voltage
+ * @param voltage Voltage value
+ * @param str Output string
+ * @param str_len String buffer length
+ */
+void format_voltage(float voltage, char *str, size_t str_len);
+
+#ifdef __cplusplus
+}
+#endif

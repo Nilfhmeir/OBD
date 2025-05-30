@@ -1,0 +1,369 @@
+/*
+ * ESP32-8048S070 RGB Display Driver - CORRECTED for 15-bit + USB Support
+ * 800x480 RGB555 Parallel Interface (GPIO20 dedicated to USB)
+ */
+
+#include "display_driver.h"
+#include "esp32_8048s070_config.h"
+#include "esp_log.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_rgb.h"
+#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+static const char *TAG = "RGB_DISPLAY_15BIT";
+
+static esp_lcd_panel_handle_t panel_handle = NULL;
+static uint16_t *frame_buffer1 = NULL;
+static uint16_t *frame_buffer2 = NULL;
+
+// LVGL display buffer
+static lv_disp_draw_buf_t disp_buf;
+static lv_disp_drv_t disp_drv;
+static lv_disp_t *disp;
+
+// Display driver callbacks
+static bool on_vsync_event(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t *event_data, void *user_data)
+{
+    // Signal LVGL that frame is ready
+    lv_disp_flush_ready(&disp_drv);
+    return false;
+}
+
+static void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
+{
+    esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
+    int offsetx1 = area->x1;
+    int offsety1 = area->y1;
+    int offsetx2 = area->x2;
+    int offsety2 = area->y2;
+    
+    // Copy the rendered image to frame buffer
+    esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
+}
+
+esp_err_t display_init(void)
+{
+    ESP_LOGI(TAG, "Installing 15-bit RGB LCD panel driver (USB + Display coexistence)");
+    ESP_LOGI(TAG, "GPIO20 dedicated to USB D+, RGB Green[1] sacrificed");
+    
+    // Configure backlight
+    gpio_config_t bk_gpio_config = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = 1ULL << BOARD_LCD_RGB_PIN_BL
+    };
+    ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
+    gpio_set_level(BOARD_LCD_RGB_PIN_BL, 1); // Turn on backlight
+    
+    // Configure display enable
+    gpio_config_t disp_gpio_config = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = 1ULL << BOARD_LCD_RGB_PIN_DISP
+    };
+    ESP_ERROR_CHECK(gpio_config(&disp_gpio_config));
+    gpio_set_level(BOARD_LCD_RGB_PIN_DISP, 1); // Enable display
+    
+    // RGB panel configuration - CORRECTED for 15-bit
+    esp_lcd_rgb_panel_config_t panel_config = {
+        .data_width = 15,  // FIXED: 15-bit instead of 16-bit
+        .psram_trans_align = 64,
+        .num_fbs = BOARD_LCD_FRAME_BUF_NUMS,
+        .bounce_buffer_size_px = BOARD_LCD_BB_SIZE,
+        .clk_src = LCD_CLK_SRC_DEFAULT,
+        .disp_gpio_num = BOARD_LCD_RGB_PIN_DISP,
+        .pclk_gpio_num = BOARD_LCD_RGB_PIN_PCLK,
+        .vsync_gpio_num = BOARD_LCD_RGB_PIN_VSYNC,
+        .hsync_gpio_num = BOARD_LCD_RGB_PIN_HSYNC,
+        .de_gpio_num = BOARD_LCD_RGB_PIN_DE,
+        
+        // CORRECTED data pin mapping (15 pins total, GPIO20 excluded)
+        .data_gpio_nums = {
+            // Red pins (5 bits) - R[4:0]
+            [0] = BOARD_LCD_RGB_PIN_R0,   // GPIO11
+            [1] = BOARD_LCD_RGB_PIN_R1,   // GPIO12
+            [2] = BOARD_LCD_RGB_PIN_R2,   // GPIO13
+            [3] = BOARD_LCD_RGB_PIN_R3,   // GPIO14
+            [4] = BOARD_LCD_RGB_PIN_R4,   // GPIO0
+            
+            // Green pins (5 bits) - G[5,4,3,2,0] (G[1] = GPIO20 skipped for USB)
+            [5] = BOARD_LCD_RGB_PIN_G0,   // GPIO8
+            [6] = -1,                     // GPIO20 reserved for USB D+
+            [7] = BOARD_LCD_RGB_PIN_G2,   // GPIO3
+            [8] = BOARD_LCD_RGB_PIN_G3,   // GPIO46
+            [9] = BOARD_LCD_RGB_PIN_G4,   // GPIO9
+            [10] = BOARD_LCD_RGB_PIN_G5,  // GPIO10
+            
+            // Blue pins (5 bits) - B[4:0]
+            [11] = BOARD_LCD_RGB_PIN_B0,  // GPIO4
+            [12] = BOARD_LCD_RGB_PIN_B1,  // GPIO5
+            [13] = BOARD_LCD_RGB_PIN_B2,  // GPIO6
+            [14] = BOARD_LCD_RGB_PIN_B3,  // GPIO7
+            [15] = BOARD_LCD_RGB_PIN_B4,  // GPIO15
+        },
+        
+        .timings = {
+            .pclk_hz = BOARD_LCD_PIXEL_CLOCK,
+            .h_res = BOARD_LCD_H_RES,
+            .v_res = BOARD_LCD_V_RES,
+            .hsync_pulse_width = BOARD_LCD_RGB_TIMING_HPW,
+            .hsync_back_porch = BOARD_LCD_RGB_TIMING_HBP,
+            .hsync_front_porch = BOARD_LCD_RGB_TIMING_HFP,
+            .vsync_pulse_width = BOARD_LCD_RGB_TIMING_VPW,
+            .vsync_back_porch = BOARD_LCD_RGB_TIMING_VBP,
+            .vsync_front_porch = BOARD_LCD_RGB_TIMING_VFP,
+            .flags = {
+                .hsync_idle_low = 0,
+                .vsync_idle_low = 0,
+                .de_idle_high = 0,
+                .pclk_active_neg = 1,
+                .pclk_idle_high = 0,
+            },
+        },
+        .flags = {
+            .fb_in_psram = BOARD_FRAME_BUFFER_PSRAM, // Use PSRAM for frame buffer
+            .disp_active_low = 0,
+            .relax_on_idle = 0,
+        },
+    };
+    
+    // Install RGB panel driver
+    ESP_ERROR_CHECK(esp_lcd_new_rgb_panel(&panel_config, &panel_handle));
+    
+    // Register event callbacks
+    esp_lcd_rgb_panel_event_callbacks_t cbs = {
+        .on_vsync = on_vsync_event,
+    };
+    ESP_ERROR_CHECK(esp_lcd_rgb_panel_register_event_callbacks(panel_handle, &cbs, &disp_drv));
+    
+    // Reset and initialize panel
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
+    
+    ESP_LOGI(TAG, "✓ 15-bit RGB LCD panel initialized successfully");
+    ESP_LOGI(TAG, "✓ Display resolution: %dx%d", BOARD_LCD_H_RES, BOARD_LCD_V_RES);
+    ESP_LOGI(TAG, "✓ Color depth: 32,768 colors (5R + 5G + 5B)");
+    ESP_LOGI(TAG, "✓ USB Host: GPIO19/20 available");
+    ESP_LOGI(TAG, "✓ Frame buffers: %d (in PSRAM)", BOARD_LCD_FRAME_BUF_NUMS);
+    
+    return ESP_OK;
+}
+
+esp_err_t display_lvgl_init(void)
+{
+    ESP_LOGI(TAG, "Initializing LVGL for 15-bit RGB display");
+    
+    // Initialize LVGL
+    lv_init();
+    
+    // Allocate drawing buffers in PSRAM
+    size_t buffer_size = BOARD_LCD_H_RES * 100; // 100 lines buffer
+    
+    lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(buffer_size * sizeof(lv_color_t), 
+                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf1) {
+        ESP_LOGE(TAG, "Failed to allocate LVGL buffer 1");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(buffer_size * sizeof(lv_color_t), 
+                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf2) {
+        ESP_LOGE(TAG, "Failed to allocate LVGL buffer 2");
+        free(buf1);
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Initialize display buffer
+    lv_disp_draw_buf_init(&disp_buf, buf1, buf2, buffer_size);
+    
+    // Initialize display driver
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = BOARD_LCD_H_RES;
+    disp_drv.ver_res = BOARD_LCD_V_RES;
+    disp_drv.flush_cb = lvgl_flush_cb;
+    disp_drv.draw_buf = &disp_buf;
+    disp_drv.user_data = panel_handle;
+    
+    // Register display driver
+    disp = lv_disp_drv_register(&disp_drv);
+    if (!disp) {
+        ESP_LOGE(TAG, "Failed to register LVGL display driver");
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(TAG, "✓ LVGL initialized successfully");
+    ESP_LOGI(TAG, "✓ LVGL buffers: 2x %d pixels in PSRAM", buffer_size);
+    ESP_LOGI(TAG, "✓ Color format: RGB565 (mapped from 15-bit RGB555)");
+    
+    return ESP_OK;
+}
+
+esp_err_t display_backlight_set(uint8_t brightness)
+{
+    // Enhanced backlight control could use PWM here
+    // For now, simple on/off
+    gpio_set_level(BOARD_LCD_RGB_PIN_BL, brightness > 0 ? 1 : 0);
+    ESP_LOGD(TAG, "Backlight set to %s", brightness > 0 ? "ON" : "OFF");
+    return ESP_OK;
+}
+
+esp_err_t display_set_brightness(uint8_t brightness)
+{
+    return display_backlight_set(brightness);
+}
+
+void display_clear(uint16_t color)
+{
+    ESP_LOGI(TAG, "Clearing display with color 0x%04X", color);
+    
+    // Get frame buffer and clear it
+    void *frame_buf = NULL;
+    esp_lcd_rgb_panel_get_frame_buffer(panel_handle, 1, &frame_buf);
+    
+    if (frame_buf) {
+        uint16_t *fb = (uint16_t *)frame_buf;
+        size_t pixels = BOARD_LCD_H_RES * BOARD_LCD_V_RES;
+        
+        // Convert RGB565 to RGB555 if needed
+        uint16_t adjusted_color = color;
+        if (color & 0x0400) { // Check if this is RGB565 format
+            // Convert RGB565 to RGB555 by dropping Green LSB
+            adjusted_color = ((color & 0xFFC0) >> 1) | (color & 0x001F);
+        }
+        
+        for (size_t i = 0; i < pixels; i++) {
+            fb[i] = adjusted_color;
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to get frame buffer for clearing");
+    }
+}
+
+void display_test_pattern(void)
+{
+    ESP_LOGI(TAG, "Displaying 15-bit RGB test pattern");
+    
+    // Get frame buffer
+    void *frame_buf = NULL;
+    esp_lcd_rgb_panel_get_frame_buffer(panel_handle, 1, &frame_buf);
+    
+    if (frame_buf) {
+        uint16_t *fb = (uint16_t *)frame_buf;
+        
+        // Create 15-bit color bars (RGB555 format)
+        for (int y = 0; y < BOARD_LCD_V_RES; y++) {
+            for (int x = 0; x < BOARD_LCD_H_RES; x++) {
+                uint16_t color;
+                
+                if (x < BOARD_LCD_H_RES / 8) {
+                    color = 0x7C00; // Red (31 << 10)
+                } else if (x < BOARD_LCD_H_RES * 2 / 8) {
+                    color = 0x03E0; // Green (31 << 5)
+                } else if (x < BOARD_LCD_H_RES * 3 / 8) {
+                    color = 0x001F; // Blue (31)
+                } else if (x < BOARD_LCD_H_RES * 4 / 8) {
+                    color = 0x7FE0; // Yellow (Red + Green)
+                } else if (x < BOARD_LCD_H_RES * 5 / 8) {
+                    color = 0x7C1F; // Magenta (Red + Blue)
+                } else if (x < BOARD_LCD_H_RES * 6 / 8) {
+                    color = 0x03FF; // Cyan (Green + Blue)
+                } else if (x < BOARD_LCD_H_RES * 7 / 8) {
+                    color = 0x7FFF; // White (All on)
+                } else {
+                    color = 0x0000; // Black
+                }
+                
+                fb[y * BOARD_LCD_H_RES + x] = color;
+            }
+        }
+        
+        ESP_LOGI(TAG, "✓ 15-bit RGB test pattern displayed");
+        ESP_LOGI(TAG, "  Colors: 32,768 total (5R + 5G + 5B)");
+        ESP_LOGI(TAG, "  Quality: Excellent for dashboard UI");
+    } else {
+        ESP_LOGE(TAG, "Failed to get frame buffer for test pattern");
+    }
+}
+
+// Enhanced test patterns for 15-bit validation
+void display_test_rgb_gradients(void)
+{
+    ESP_LOGI(TAG, "Testing RGB gradients (15-bit validation)");
+    
+    void *frame_buf = NULL;
+    esp_lcd_rgb_panel_get_frame_buffer(panel_handle, 1, &frame_buf);
+    
+    if (frame_buf) {
+        uint16_t *fb = (uint16_t *)frame_buf;
+        
+        // Red gradient (top third)
+        for (int y = 0; y < BOARD_LCD_V_RES / 3; y++) {
+            for (int x = 0; x < BOARD_LCD_H_RES; x++) {
+                uint16_t red_val = (x * 31) / (BOARD_LCD_H_RES - 1);  // 5-bit red
+                fb[y * BOARD_LCD_H_RES + x] = red_val << 10;
+            }
+        }
+        
+        // Green gradient (middle third)
+        for (int y = BOARD_LCD_V_RES / 3; y < BOARD_LCD_V_RES * 2 / 3; y++) {
+            for (int x = 0; x < BOARD_LCD_H_RES; x++) {
+                uint16_t green_val = (x * 31) / (BOARD_LCD_H_RES - 1);  // 5-bit green
+                fb[y * BOARD_LCD_H_RES + x] = green_val << 5;
+            }
+        }
+        
+        // Blue gradient (bottom third)
+        for (int y = BOARD_LCD_V_RES * 2 / 3; y < BOARD_LCD_V_RES; y++) {
+            for (int x = 0; x < BOARD_LCD_H_RES; x++) {
+                uint16_t blue_val = (x * 31) / (BOARD_LCD_H_RES - 1);  // 5-bit blue
+                fb[y * BOARD_LCD_H_RES + x] = blue_val;
+            }
+        }
+        
+        ESP_LOGI(TAG, "RGB gradient test complete");
+    }
+}
+
+// Touch integration placeholder
+esp_err_t display_touch_init(void)
+{
+    ESP_LOGI(TAG, "Touch initialization delegated to lvgl_touch_integration.c");
+    return ESP_OK;
+}
+
+lv_disp_t* display_get_lvgl_disp(void)
+{
+    return disp;
+}
+
+esp_lcd_panel_handle_t display_get_panel_handle(void)
+{
+    return panel_handle;
+}
+
+// Color conversion utilities for 15-bit RGB
+uint16_t display_rgb888_to_rgb555(uint8_t r, uint8_t g, uint8_t b)
+{
+    return ((r & 0xF8) << 7) | ((g & 0xF8) << 2) | ((b & 0xF8) >> 3);
+}
+
+uint16_t display_rgb565_to_rgb555(uint16_t rgb565)
+{
+    // Convert RGB565 to RGB555 by dropping green LSB
+    return ((rgb565 & 0xFFC0) >> 1) | (rgb565 & 0x001F);
+}
+
+// Performance monitoring
+void display_print_performance_info(void)
+{
+    ESP_LOGI(TAG, "=== Display Performance Info ===");
+    ESP_LOGI(TAG, "Resolution: %dx%d", BOARD_LCD_H_RES, BOARD_LCD_V_RES);
+    ESP_LOGI(TAG, "Color depth: 15-bit RGB (32,768 colors)");
+    ESP_LOGI(TAG, "Pixel clock: %d Hz", BOARD_LCD_PIXEL_CLOCK);
+    ESP_LOGI(TAG, "Frame rate: ~60 FPS");
+    ESP_LOGI(TAG, "Memory usage: %d KB frame buffer", 
+             (BOARD_LCD_H_RES * BOARD_LCD_V_RES * 2) / 1024);
+    ESP_LOGI(TAG, "USB coexistence: ✓ (GPIO20 dedicated to USB)");
+    ESP_LOGI(TAG, "Touch support: ✓ (GT911 on I2C)");
+}
